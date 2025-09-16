@@ -1,0 +1,19 @@
+{
+  "name": "data-cleaning-vercel",
+  "version": "1.0.0",
+  "description": "Data Cleaning Application deployed on Vercel",
+  "main": "index.js",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "start": "cd frontend && npm start",
+    "dev": "cd frontend && npm start",
+    "install-frontend": "cd frontend && npm install",
+    "install-backend": "pip install -r requirements.txt"
+  },
+  "keywords": ["react", "flask", "data-cleaning", "vercel"],
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
