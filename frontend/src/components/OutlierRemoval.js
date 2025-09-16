@@ -3,7 +3,6 @@ import axios from 'axios';
 import API_BASE_URL from '../config';
 
 const OutlierRemoval = ({ fileInfo, onDataUpdate }) => {
-  const [columns, setColumns] = useState([]);
   const [numericColumns, setNumericColumns] = useState([]);
   const [outlierRules, setOutlierRules] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -13,7 +12,6 @@ const OutlierRemoval = ({ fileInfo, onDataUpdate }) => {
 
   useEffect(() => {
     if (fileInfo?.columns) {
-      setColumns(fileInfo.columns);
       loadDataInfo();
     }
   }, [fileInfo]);
@@ -94,7 +92,7 @@ const OutlierRemoval = ({ fileInfo, onDataUpdate }) => {
   const applyOutlierRemoval = async () => {
     const validRules = outlierRules.filter(rule => 
       rule.column && rule.method && rule.action &&
-      (rule.method !== 'zscore' && rule.method !== 'modified_zscore' && rule.method !== 'percentile' || rule.threshold)
+      ((rule.method !== 'zscore' && rule.method !== 'modified_zscore' && rule.method !== 'percentile') || rule.threshold)
     );
 
     if (validRules.length === 0) {

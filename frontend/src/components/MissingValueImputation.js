@@ -3,7 +3,6 @@ import axios from 'axios';
 import API_BASE_URL from '../config';
 
 const MissingValueImputation = ({ fileInfo, onDataUpdate }) => {
-  const [columns, setColumns] = useState([]);
   const [missingValueColumns, setMissingValueColumns] = useState([]);
   const [imputationRules, setImputationRules] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -14,7 +13,6 @@ const MissingValueImputation = ({ fileInfo, onDataUpdate }) => {
 
   useEffect(() => {
     if (fileInfo?.columns) {
-      setColumns(fileInfo.columns);
       loadMissingValueInfo();
     }
   }, [fileInfo]);
