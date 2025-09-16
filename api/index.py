@@ -5,22 +5,10 @@ import json
 import tempfile
 from werkzeug.utils import secure_filename
 import logging
-
-# Try to import data libraries, fall back gracefully
-try:
-    import pandas as pd
-    import numpy as np
-    HAS_PANDAS = True
-except ImportError:
-    HAS_PANDAS = False
-    pd = None
-    np = None
-
-try:
-    import openpyxl
-    HAS_EXCEL = True
-except ImportError:
-    HAS_EXCEL = False
+import csv
+import io
+from collections import defaultdict
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app, origins=["*"])
@@ -29,7 +17,50 @@ CORS(app, origins=["*"])
 data_store = {}
 
 def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'csv', 'xlsx', 'xls'}
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in {'csv'}
+
+def read_csv_file(filepath):
+    """Read CSV file using built-in csv module"""
+    data = []
+    with open(filepath, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        columns = list(reader.fieldnames) if reader.fieldnames else []
+        for row in reader:
+            data.append(row)
+    return data, columns
+
+def get_basic_stats(data, columns):
+    """Get basic statistics without pandas"""
+    stats = {}
+    total_rows = len(data)
+    
+    for col in columns:
+        values = [row.get(col, '') for row in data]
+        non_empty = [v for v in values if v and str(v).strip()]
+        missing = total_rows - len(non_empty)
+        
+        # Try to convert to numbers
+        numeric_values = []
+        for v in non_empty:
+            try:
+                numeric_values.append(float(v))
+            except (ValueError, TypeError):
+                continue
+        
+        col_stats = {
+            'missing': missing,
+            'non_null': len(non_empty),
+            'dtype': 'numeric' if len(numeric_values) > len(non_empty) * 0.5 else 'object'
+        }
+        
+        if numeric_values:
+            col_stats['mean'] = sum(numeric_values) / len(numeric_values)
+            col_stats['min'] = min(numeric_values)
+            col_stats['max'] = max(numeric_values)
+        
+        stats[col] = col_stats
+    
+    return stats
 
 def handler(request):
     """Main handler for all API routes"""
@@ -80,9 +111,6 @@ def handler(request):
 def handle_upload(request):
     """Handle file upload"""
     try:
-        if not HAS_PANDAS:
-            return jsonify({'error': 'Data processing libraries not available'})
-            
         if 'file' not in request.files:
             return jsonify({'error': 'No file part'})
         
@@ -92,21 +120,17 @@ def handle_upload(request):
         
         if file and allowed_file(file.filename):
             # Save to temporary file
-            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}")
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".csv")
             file.save(temp_file.name)
             
-            # Read the file
-            if file.filename.endswith('.csv'):
-                df = pd.read_csv(temp_file.name)
-            else:
-                if not HAS_EXCEL:
-                    return jsonify({'error': 'Excel support not available'})
-                df = pd.read_excel(temp_file.name)
+            # Read the CSV file
+            data, columns = read_csv_file(temp_file.name)
             
-            # Store in global storage (in production, use proper storage)
-            session_id = 'default'  # In production, use proper session management
+            # Store in global storage
+            session_id = 'default'
             data_store[session_id] = {
-                'data': df,
+                'data': data,
+                'columns': columns,
                 'filename': file.filename,
                 'operations': []
             }
@@ -117,11 +141,11 @@ def handle_upload(request):
             return jsonify({
                 'message': 'File uploaded successfully',
                 'filename': file.filename,
-                'shape': df.shape,
-                'columns': df.columns.tolist()
+                'shape': [len(data), len(columns)],
+                'columns': columns
             })
         else:
-            return jsonify({'error': 'Invalid file type'})
+            return jsonify({'error': 'Only CSV files are supported in this lightweight version'})
     except Exception as e:
         return jsonify({'error': str(e)})
 
@@ -131,23 +155,23 @@ def handle_preview(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    df = data_store[session_id]['data']
+    data = data_store[session_id]['data']
     
     # Get first 5 rows and last 5 rows
     preview_data = []
-    total_rows = len(df)
+    total_rows = len(data)
     
     if total_rows <= 10:
-        preview_data = df.to_dict('records')
+        preview_data = data
     else:
-        first_5 = df.head(5).to_dict('records')
-        last_5 = df.tail(5).to_dict('records')
-        preview_data = first_5 + [{'...': '... {} more rows ...'.format(total_rows - 10)}] + last_5
+        first_5 = data[:5]
+        last_5 = data[-5:]
+        preview_data = first_5 + [{'...': f'... {total_rows - 10} more rows ...'}] + last_5
     
     return jsonify({
         'data': preview_data,
         'total_rows': total_rows,
-        'columns': df.columns.tolist()
+        'columns': data_store[session_id]['columns']
     })
 
 def handle_info(request):
@@ -156,21 +180,33 @@ def handle_info(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    df = data_store[session_id]['data']
+    data = data_store[session_id]['data']
+    columns = data_store[session_id]['columns']
     
     # Calculate basic info
+    stats = get_basic_stats(data, columns)
+    
     info = {
-        'shape': df.shape,
-        'columns': df.columns.tolist(),
-        'dtypes': df.dtypes.astype(str).to_dict(),
-        'missing_values': df.isnull().sum().to_dict(),
-        'memory_usage': df.memory_usage(deep=True).sum() / (1024 * 1024),  # MB
+        'shape': [len(data), len(columns)],
+        'columns': columns,
+        'dtypes': {col: stats[col]['dtype'] for col in columns},
+        'missing_values': {col: stats[col]['missing'] for col in columns},
+        'memory_usage': len(str(data)) / (1024 * 1024),  # Rough estimate
     }
     
     # Add basic statistics for numeric columns
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    if len(numeric_cols) > 0:
-        info['statistics'] = df[numeric_cols].describe().to_dict()
+    statistics = {}
+    for col in columns:
+        if stats[col]['dtype'] == 'numeric' and 'mean' in stats[col]:
+            statistics[col] = {
+                'count': stats[col]['non_null'],
+                'mean': stats[col]['mean'],
+                'min': stats[col]['min'],
+                'max': stats[col]['max']
+            }
+    
+    if statistics:
+        info['statistics'] = statistics
     
     return jsonify(info)
 
@@ -180,23 +216,21 @@ def handle_data(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    df = data_store[session_id]['data']
-    
-    # Convert data for JSON serialization
-    data_dict = df.to_dict('records')
+    data = data_store[session_id]['data']
+    columns = data_store[session_id]['columns']
     
     return jsonify({
-        'data': data_dict,
-        'shape': df.shape,
-        'columns': df.columns.tolist()
+        'data': data,
+        'shape': [len(data), len(columns)],
+        'columns': columns
     })
 
 def handle_plot(request):
     """Handle plot generation"""
-    # For now, return a simple response
-    # In production, you'd generate actual plots
+    # Return a simple placeholder for plotting
     return jsonify({
-        'plot_url': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+        'plot_url': 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+        'message': 'Plotting functionality requires pandas and matplotlib (not available in lightweight version)'
     })
 
 def handle_correlation(request):
@@ -205,17 +239,8 @@ def handle_correlation(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    df = data_store[session_id]['data']
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    
-    if len(numeric_cols) < 2:
-        return jsonify({'error': 'Not enough numeric columns for correlation'})
-    
-    correlation_matrix = df[numeric_cols].corr()
-    
     return jsonify({
-        'correlation_matrix': correlation_matrix.to_dict(),
-        'columns': numeric_cols.tolist()
+        'error': 'Correlation matrix requires pandas and numpy (not available in lightweight version)'
     })
 
 def handle_drop_columns(request):
@@ -224,24 +249,34 @@ def handle_drop_columns(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    data = request.get_json()
-    columns_to_drop = data.get('columns', [])
+    req_data = request.get_json()
+    columns_to_drop = req_data.get('columns', [])
     
-    df = data_store[session_id]['data']
-    df_modified = df.drop(columns=columns_to_drop)
+    data = data_store[session_id]['data']
+    columns = data_store[session_id]['columns']
+    
+    # Remove columns from data
+    new_data = []
+    for row in data:
+        new_row = {k: v for k, v in row.items() if k not in columns_to_drop}
+        new_data.append(new_row)
+    
+    # Update columns list
+    new_columns = [col for col in columns if col not in columns_to_drop]
     
     # Update stored data
-    data_store[session_id]['data'] = df_modified
+    data_store[session_id]['data'] = new_data
+    data_store[session_id]['columns'] = new_columns
     data_store[session_id]['operations'].append({
         'type': 'drop_columns',
         'columns': columns_to_drop,
-        'timestamp': pd.Timestamp.now().isoformat()
+        'timestamp': datetime.now().isoformat()
     })
     
     return jsonify({
         'message': f'Successfully dropped {len(columns_to_drop)} columns',
-        'new_shape': df_modified.shape,
-        'remaining_columns': df_modified.columns.tolist()
+        'new_shape': [len(new_data), len(new_columns)],
+        'remaining_columns': new_columns
     })
 
 def handle_impute_missing(request):
@@ -250,37 +285,40 @@ def handle_impute_missing(request):
     if session_id not in data_store:
         return jsonify({'error': 'No data uploaded'})
     
-    data = request.get_json()
-    method = data.get('method', 'mean')
-    columns = data.get('columns', [])
+    req_data = request.get_json()
+    method = req_data.get('method', 'mean')
+    columns_to_impute = req_data.get('columns', [])
     
-    df = data_store[session_id]['data'].copy()
+    data = data_store[session_id]['data']
     
-    for col in columns:
-        if col in df.columns:
-            if method == 'mean' and pd.api.types.is_numeric_dtype(df[col]):
-                df[col].fillna(df[col].mean(), inplace=True)
-            elif method == 'median' and pd.api.types.is_numeric_dtype(df[col]):
-                df[col].fillna(df[col].median(), inplace=True)
-            elif method == 'mode':
-                mode_value = df[col].mode()[0] if len(df[col].mode()) > 0 else 0
-                df[col].fillna(mode_value, inplace=True)
-            elif method == 'drop':
-                df.dropna(subset=[col], inplace=True)
+    # Simple imputation
+    for col in columns_to_impute:
+        values = [row.get(col, '') for row in data]
+        non_empty = [v for v in values if v and str(v).strip()]
+        
+        if method == 'mode' and non_empty:
+            # Most common value
+            most_common = max(set(non_empty), key=non_empty.count)
+            for row in data:
+                if not row.get(col, '').strip():
+                    row[col] = most_common
+        elif method == 'drop':
+            # Remove rows with missing values in this column
+            data = [row for row in data if row.get(col, '').strip()]
     
     # Update stored data
-    data_store[session_id]['data'] = df
+    data_store[session_id]['data'] = data
     data_store[session_id]['operations'].append({
         'type': 'impute_missing',
         'method': method,
-        'columns': columns,
-        'timestamp': pd.Timestamp.now().isoformat()
+        'columns': columns_to_impute,
+        'timestamp': datetime.now().isoformat()
     })
     
     return jsonify({
         'message': f'Successfully imputed missing values using {method} method',
-        'new_shape': df.shape,
-        'missing_values': df.isnull().sum().to_dict()
+        'new_shape': [len(data), len(data_store[session_id]['columns'])],
+        'missing_values': 'Updated'
     })
 
 # For Vercel serverless deployment
