@@ -1,12 +1,26 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pandas as pd
-import numpy as np
 import os
 import json
 import tempfile
 from werkzeug.utils import secure_filename
 import logging
+
+# Try to import data libraries, fall back gracefully
+try:
+    import pandas as pd
+    import numpy as np
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    pd = None
+    np = None
+
+try:
+    import openpyxl
+    HAS_EXCEL = True
+except ImportError:
+    HAS_EXCEL = False
 
 app = Flask(__name__)
 CORS(app, origins=["*"])
@@ -66,6 +80,9 @@ def handler(request):
 def handle_upload(request):
     """Handle file upload"""
     try:
+        if not HAS_PANDAS:
+            return jsonify({'error': 'Data processing libraries not available'})
+            
         if 'file' not in request.files:
             return jsonify({'error': 'No file part'})
         
@@ -82,6 +99,8 @@ def handle_upload(request):
             if file.filename.endswith('.csv'):
                 df = pd.read_csv(temp_file.name)
             else:
+                if not HAS_EXCEL:
+                    return jsonify({'error': 'Excel support not available'})
                 df = pd.read_excel(temp_file.name)
             
             # Store in global storage (in production, use proper storage)
