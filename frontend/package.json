@@ -13,20 +13,13 @@
     "react-dropzone": "^14.2.3",
     "react-table": "^7.8.0",
     "recharts": "^2.8.0",
-    "web-vitals": "^2.1.4",
-    "flask": "^2.3.3",
-    "pandas": "^2.1.1",
-    "numpy": "^1.24.3",
-    "matplotlib": "^3.7.2",
-    "seaborn": "^0.12.2"
+    "web-vitals": "^2.1.4"
   },
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "dev": "react-scripts start",
-    "vercel-build": "react-scripts build"
+    "eject": "react-scripts eject"
   },
   "eslintConfig": {
     "extends": [
