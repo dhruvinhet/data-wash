@@ -25,7 +25,7 @@ const DataPreview = ({ fileInfo, onDataLoad }) => {
       setLoading(false);
       setError(null);
     }
-  }, [fileInfo, hasValidFileInfo]);
+  }, [fileInfo, hasValidFileInfo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadPreviewData = async () => {
     if (!hasValidFileInfo) {
